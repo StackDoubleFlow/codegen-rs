@@ -1,10 +1,14 @@
+#![warn(rust_2018_idioms)]
+
 mod data;
+mod writer;
 
 use data::DllData;
-use std::fs::File;
+use std::{fs::File, io::Write};
 
 fn main() {
-    let f = File::open("parsed.json").expect("Unable to read JSON dump");
-    let json: DllData = serde_json::from_reader(f).unwrap();
-    dbg!(&json.types[0].this.name);
+    let input = File::open("parsed.json").expect("Unable to read JSON dump");
+    let json: DllData = serde_json::from_reader(input).unwrap();
+    let mut output = File::create("generated.rs").unwrap();
+    output.write_fmt(format_args!("{}", json.write_tokens())).unwrap();
 }

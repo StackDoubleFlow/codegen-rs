@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub enum TypeEnum {
     Struct,
     Class,
@@ -8,7 +8,7 @@ pub enum TypeEnum {
     Interface,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct TypeDataThis {
     #[serde(rename = "Namespace")]
     pub namespace: String,
@@ -28,14 +28,14 @@ pub struct TypeDataThis {
     pub generics: Vec<TypeRef>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub enum LayoutKind {
     Auto,
     Sequential,
     Explicit
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct TypeData {
     #[serde(rename = "This")] 
     pub this: TypeDataThis,
@@ -67,7 +67,7 @@ pub struct TypeData {
     pub size: i32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct TypeRef {
     #[serde(rename = "Namespace")]
     pub namespace: String,
@@ -79,7 +79,7 @@ pub struct TypeRef {
     pub generics: Vec<TypeRef>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Method {
     #[serde(rename = "Attributes")]
     pub attributes: Vec<Attribute>,
@@ -115,7 +115,7 @@ pub struct Method {
     pub va: i32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Field {
     #[serde(rename = "Attributes")]
     pub attributes: Vec<Attribute>,
@@ -131,7 +131,7 @@ pub struct Field {
     pub field_type: TypeRef,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Attribute {
     #[serde(rename = "Name")]
     pub name: String,
@@ -143,13 +143,13 @@ pub struct Attribute {
     pub va: i32,
 }
 
-// #[derive(Deserialize)]
+// #[derive(Deserialize, Debug)]
 // pub struct Specifier {
 //     #[serde(rename = "Value")]
 //     pub value: String,
 // }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub enum ParameterModifier {
     None,
     Ref,
@@ -158,7 +158,7 @@ pub enum ParameterModifier {
     Params,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Parameter {
     #[serde(rename = "Type")]
     pub parameter_type: TypeRef,
@@ -168,7 +168,7 @@ pub struct Parameter {
     pub modifier: ParameterModifier,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Property {
     #[serde(rename = "Attributes")]
     pub attributes: Vec<Attribute>,
@@ -184,7 +184,7 @@ pub struct Property {
     pub property_type: TypeRef,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct DllData {
     #[serde(rename = "Types")]
     pub types: Vec<TypeData>,
