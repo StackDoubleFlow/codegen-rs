@@ -16,12 +16,22 @@ pub fn is_ident_continue(c: char) -> bool {
         || (c > '\x7f' && UnicodeXID::is_xid_continue(c))
 }
 
+const RESTRICTED_KEYWORDS: &[&str] = &[
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for",
+    "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+    "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where",
+    "while", "async", "await", "dyn",
+];
+
 pub fn fix_ident(ident: &str) -> String {
     let mut new = String::new();
     let mut chars = ident.chars();
     let first = chars.next().unwrap();
     if !is_ident_start(first) {
         new.push('_');
+        if is_ident_continue(first) {
+            new.push(first);
+        }
     } else {
         new.push(first);
     }
@@ -32,12 +42,15 @@ pub fn fix_ident(ident: &str) -> String {
             new.push(ch);
         }
     }
+    if RESTRICTED_KEYWORDS.contains(&new.as_str()) {
+        new.insert(0, '_');
+    }
     new
 }
 
 pub fn create_ident(string: &str) -> Ident {
     Ident::new(
-        &fix_ident(string).trim_start_matches('_'),
+        &fix_ident(string.trim_start_matches('_')),
         Span::call_site(),
     )
 }

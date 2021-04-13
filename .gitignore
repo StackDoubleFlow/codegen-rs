@@ -1,6 +1,6 @@
 /target
 
 # Input file
-parsed.json
+*.json
 # Output file
 generated.rs
