@@ -62,7 +62,7 @@ impl TypeData {
             let super_ident = create_ident("super_");
             let super_type = parent.write_tokens();
             quote! {
-                #super_ident: #super_type
+                #super_ident: #super_type,
             }
         });
         let deref = self.write_deref(&name);
@@ -70,7 +70,7 @@ impl TypeData {
         quote! {
             #[repr(C)]
             pub struct #name {
-                #super_field,
+                #super_field
                 #( pub #fields ),*
             }
 
@@ -89,7 +89,7 @@ impl TypeData {
 
             //     }
             // },
-            TypeEnum::Class => self.write_class(),
+            TypeEnum::Class | TypeEnum::Struct => self.write_class(),
             _ => quote! {},
         }
     }
@@ -128,7 +128,9 @@ impl<'a> Module<'a> {
                 pub mod #children_names {
                     #children
                 }
+            )*
 
+            #(
                 #types
             )*
         }
