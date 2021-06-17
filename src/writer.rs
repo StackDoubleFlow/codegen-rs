@@ -2,12 +2,13 @@ use crate::data::*;
 use crate::helpers::create_ident;
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
+use std::collections::HashMap;
 
 fn get_qualified_name(namespace: &str, name: &str) -> TokenStream {
     let namespace_tokens = namespace.split_terminator('.').map(create_ident);
     let name_ident = create_ident(name);
     quote! {
-        #( #namespace_tokens :: )* #name_ident
+        crate:: #( #namespace_tokens :: )* #name_ident
     }
 }
 
@@ -44,7 +45,7 @@ impl TypeData {
         let parent = self.parent.as_ref()?;
         let super_type = parent.write_tokens();
         Some(quote! {
-            impl Deref for #name {
+            impl std::ops::Deref for #name {
                 type Target = #super_type;
 
                 fn deref(&self) -> &Self::Target {
@@ -68,7 +69,7 @@ impl TypeData {
         let methods = self.methods.iter().map(Method::write_tokens);
         quote! {
             #[repr(C)]
-            struct #name {
+            pub struct #name {
                 #super_field,
                 #( pub #fields ),*
             }
@@ -94,12 +95,42 @@ impl TypeData {
     }
 }
 
+#[derive(Default)]
+struct Module<'a> {
+    children: HashMap<String, Module<'a>>,
+    types: Vec<&'a TypeData>
+}
+
 impl DllData {
     pub fn write_tokens(&self) -> TokenStream {
-        let types = self.types.iter().map(TypeData::write_tokens);
+        let mut global_module = Module::default();
 
+        for ty in &self.types {
+            let namespace = ty.this.namespace.split_terminator('.');
+            let mut module = &mut global_module;
+            for part in namespace {
+                module = module.children.entry(part.to_owned()).or_default();
+            }
+            module.types.push(ty);
+        }
+
+        global_module.write_tokens()
+    }
+}
+
+impl<'a> Module<'a> {
+    fn write_tokens(&self) -> TokenStream {
+        let children_names = self.children.keys().map(|s| create_ident(s));
+        let children = self.children.values().map(|module| module.write_tokens());
+        let types = self.types.iter().cloned().map(TypeData::write_tokens);
         quote! {
-            #( #types )*
+            #(
+                pub mod #children_names {
+                    #children
+                }
+
+                #types
+            )*
         }
     }
 }
