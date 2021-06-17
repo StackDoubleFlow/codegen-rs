@@ -2,17 +2,17 @@ use proc_macro2::{Ident, Span};
 use unicode_xid::UnicodeXID;
 
 pub fn is_ident_start(c: char) -> bool {
-    ('a' <= c && c <= 'z')
-        || ('A' <= c && c <= 'Z')
+    ('a'..'z').contains(&c)
+        || ('A'..'Z').contains(&c)
         || c == '_'
         || (c > '\x7f' && UnicodeXID::is_xid_start(c))
 }
 
 pub fn is_ident_continue(c: char) -> bool {
-    ('a' <= c && c <= 'z')
-        || ('A' <= c && c <= 'Z')
+    ('a'..'z').contains(&c)
+        || ('A'..'Z').contains(&c)
         || c == '_'
-        || ('0' <= c && c <= '9')
+        || ('0'..'9').contains(&c)
         || (c > '\x7f' && UnicodeXID::is_xid_continue(c))
 }
 

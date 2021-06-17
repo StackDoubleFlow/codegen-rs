@@ -2,5 +2,7 @@
 
 # Input file
 *.json
+# Cache
+*.bc
 # Output file
 generated.rs

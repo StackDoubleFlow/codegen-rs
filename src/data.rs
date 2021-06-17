@@ -1,6 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::ops::Index;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub enum TypeEnum {
     Struct,
     Class,
@@ -8,7 +9,7 @@ pub enum TypeEnum {
     Interface,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct TypeDataThis {
     pub namespace: String,
@@ -21,14 +22,14 @@ pub struct TypeDataThis {
     pub generics: Vec<TypeRef>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub enum LayoutKind {
     Auto,
     Sequential,
     Explicit,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct TypeData {
     pub this: TypeDataThis,
@@ -48,7 +49,7 @@ pub struct TypeData {
     pub size: i32,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct TypeRef {
     pub namespace: String,
@@ -57,7 +58,7 @@ pub struct TypeRef {
     pub generics: Vec<TypeRef>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Method {
     pub attributes: Vec<Attribute>,
@@ -81,7 +82,7 @@ pub struct Method {
     pub va: i32,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Field {
     pub attributes: Vec<Attribute>,
@@ -93,7 +94,7 @@ pub struct Field {
     pub field_type: TypeRef,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Attribute {
     pub name: String,
@@ -110,7 +111,7 @@ pub struct Attribute {
 //     pub value: String,
 // }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub enum ParameterModifier {
     None,
     Ref,
@@ -119,7 +120,7 @@ pub enum ParameterModifier {
     Params,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Parameter {
     #[serde(rename = "Type")]
@@ -128,7 +129,7 @@ pub struct Parameter {
     pub modifier: ParameterModifier,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Property {
     pub attributes: Vec<Attribute>,
@@ -140,8 +141,16 @@ pub struct Property {
     pub property_type: TypeRef,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct DllData {
     pub types: Vec<TypeData>,
+}
+
+impl Index<TypeRef> for DllData {
+    type Output = TypeData;
+
+    fn index(&self, type_ref: TypeRef) -> &Self::Output {
+        &self.types[type_ref.type_id as usize]
+    }
 }
