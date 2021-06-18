@@ -58,7 +58,3 @@ pub fn create_ident(string: &str) -> Ident {
 pub fn create_ident_trimmed(string: &str) -> Ident {
     create_ident(string.trim_start_matches('_'))
 }
-
-// pub fn create_ident_untrimmed(string: &str) -> Ident {
-//     Ident::new(&fix_ident(string), Span::call_site())
-// }

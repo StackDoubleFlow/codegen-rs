@@ -19,6 +19,7 @@ impl TypeRef {
         
         let mut current = &types[self];
         while let Some(parent) = &current.this.declaring_type {
+            name.insert(0, '_');
             name.insert_str(0, &parent.name);
             current = &types[parent];
         }
@@ -132,6 +133,8 @@ impl DllData {
             }
             module.types.push(ty);
         }
+
+        // println!("{}", serde_json::to_string(&self.types[9292]).unwrap());
 
         global_module.write_tokens(self)
     }
