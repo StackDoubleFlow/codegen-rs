@@ -16,11 +16,14 @@ pub fn is_ident_continue(c: char) -> bool {
         || (c > '\x7f' && UnicodeXID::is_xid_continue(c))
 }
 
+/// strict and reserved rust keywords:
+/// https://doc.rust-lang.org/reference/keywords.html
 const RESTRICTED_KEYWORDS: &[&str] = &[
     "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for",
     "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
     "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where",
-    "while", "async", "await", "dyn",
+    "while", "async", "await", "dyn", "abstract", "become", "box", "do", "final", "macro",
+    "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
 ];
 
 pub fn fix_ident(ident: &str) -> String {
@@ -49,10 +52,7 @@ pub fn fix_ident(ident: &str) -> String {
 }
 
 pub fn create_ident(string: &str) -> Ident {
-    Ident::new(
-        &fix_ident(string),
-        Span::call_site(),
-    )
+    Ident::new(&fix_ident(string), Span::call_site())
 }
 
 pub fn create_ident_trimmed(string: &str) -> Ident {

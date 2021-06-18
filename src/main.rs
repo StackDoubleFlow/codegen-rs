@@ -7,8 +7,8 @@ mod writer;
 use anyhow::{Context, Result};
 use data::DllData;
 use std::fs::File;
-use std::path::Path;
 use std::io::Write;
+use std::path::Path;
 
 fn read_dll_data() -> Result<DllData> {
     Ok(if Path::new("codegen.bc").exists() {
@@ -29,7 +29,7 @@ fn read_dll_data() -> Result<DllData> {
 fn main() -> Result<()> {
     println!("Reading codegen data");
     let json: DllData = read_dll_data()?;
-    
+
     println!("Creating output file");
     let mut output = File::create("generated.rs")?;
 
