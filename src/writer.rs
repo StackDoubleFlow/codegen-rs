@@ -89,11 +89,11 @@ impl Method {
 }
 
 impl TypeData {
-    fn write_deref(&self, name: &Ident, types: &DllData) -> Option<TokenStream> {
+    fn write_deref(&self, name: &Ident, generics: &Option<TokenStream>, types: &DllData) -> Option<TokenStream> {
         let parent = self.parent.as_ref()?;
         let super_type = parent.write_qualified_name(types);
         Some(quote! {
-            impl std::ops::Deref for #name {
+            impl #generics std::ops::Deref for #name #generics {
                 type Target = #super_type;
 
                 fn deref(&self) -> &Self::Target {
@@ -117,6 +117,8 @@ impl TypeData {
     }
 
     fn write_class(&self, types: &DllData) -> TokenStream {
+        let namespace = &self.this.namespace;
+        let name_lit = &self.this.name;
         let name = self.full_name(types);
         let fields = self.instance_fields.iter().map(|f| f.write_tokens(types));
         let super_field = self.parent.as_ref().map(|parent| {
@@ -127,13 +129,13 @@ impl TypeData {
             }
         });
         let methods = self.methods.iter().map(|m| m.write_tokens(types));
-        let deref = self.write_deref(&name, types);
         let generics = if !self.this.generics.is_empty() {
             let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
             Some(quote! { < #( #args ),* > })
         } else {
             None
         };
+        let deref = self.write_deref(&name, &generics, types);
 
         quote! {
             #[repr(C)]
@@ -144,6 +146,11 @@ impl TypeData {
 
             impl #generics #name #generics {
                 #( #methods )*
+            }
+
+            impl #generics quest_hook::libil2cpp::Type for #name #generics {
+                const NAMESPACE: &'static str = #namespace;
+                const CLASS_NAME: &'static str = #name_lit;
             }
 
             #deref
