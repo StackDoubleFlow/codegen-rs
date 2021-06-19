@@ -57,6 +57,9 @@ pub struct TypeRef {
     pub name: String,
     pub type_id: i32,
     pub generics: Vec<TypeRef>,
+    pub is_generic_parameter: bool,
+    pub is_array: bool,
+    pub is_pointer: bool,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

@@ -4,14 +4,6 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{quote, ToTokens};
 use std::collections::HashMap;
 
-fn get_qualified_name(namespace: &str, name: &str) -> TokenStream {
-    let namespace_tokens = namespace.split_terminator('.').map(create_ident);
-    let name_ident = create_ident(name);
-    quote! {
-        crate:: #( #namespace_tokens :: )* #name_ident
-    }
-}
-
 impl TypeRef {
     fn full_name(&self, types: &DllData) -> String {
         let mut name = self.name.clone();
@@ -26,10 +18,38 @@ impl TypeRef {
         name
     }
 
+    fn get_qualified_name(&self, types: &DllData) -> TokenStream {
+        let mut name = self.name.clone();
+        let mut namespace = &self.namespace;
+
+        let mut current = &types[self];
+        while let Some(parent) = &current.this.declaring_type {
+            name.insert(0, '_');
+            name.insert_str(0, &parent.name);
+            namespace = &parent.namespace;
+            current = &types[parent];
+        }
+
+        let namespace_tokens = namespace.split_terminator('.').map(create_ident);
+        let name_ident = create_ident(&name);
+        let generics = if !self.generics.is_empty() {
+            let args = self
+                .generics
+                .iter()
+                .map(|tr| tr.write_instance_type(types));
+            Some(quote! { < #( #args ),* > })
+        } else {
+            None
+        };
+
+        quote! {
+            crate:: #( #namespace_tokens :: )* #name_ident #generics
+        }
+    }
+
     fn write_qualified_name(&self, types: &DllData) -> TokenStream {
-        if self.type_id > 0 {
-            let name = self.full_name(types);
-            get_qualified_name(&self.namespace, &name)
+        if self.type_id >= 0 {
+            self.get_qualified_name(types)
         } else {
             create_ident(&self.name).into_token_stream()
         }
@@ -42,7 +62,12 @@ impl TypeRef {
             None
         };
         let name = self.write_qualified_name(types);
-        quote! { #prefix #name }
+        let ty = quote! { #prefix #name };
+        if self.is_array {
+            quote! { *mut quest_hook::libil2cpp::Il2CppArray< #ty > }
+        } else {
+            ty
+        }
     }
 }
 
@@ -58,6 +83,7 @@ impl Field {
 
 impl Method {
     fn write_tokens(&self, types: &DllData) -> TokenStream {
+        let name_str = &self.name;
         let name = create_ident(&self.name);
         let param_names = self.parameters.iter().enumerate().map(|(i, p)| {
             if p.name.is_empty() {
@@ -66,6 +92,7 @@ impl Method {
                 create_ident(&p.name)
             }
         });
+        let param_names2 = param_names.clone();
         let param_types = self
             .parameters
             .iter()
@@ -80,9 +107,12 @@ impl Method {
         } else {
             None
         };
-        quote! {
-            pub fn #name #generics ( #( #param_names: #param_types ),* ) -> #return_type {
+        let doc = format!("Offset: {:0X}", self.offset);
 
+        quote! {
+            #[doc = #doc]
+            pub fn #name #generics ( #( #param_names: #param_types ),* ) -> #return_type {
+                Self::class().invoke(#name_str, #( #param_names2 ),* )
             }
         }
     }
@@ -148,7 +178,7 @@ impl TypeData {
                 #( #methods )*
             }
 
-            impl #generics quest_hook::libil2cpp::Type for #name #generics {
+            unsafe impl #generics quest_hook::libil2cpp::Type for #name #generics {
                 const NAMESPACE: &'static str = #namespace;
                 const CLASS_NAME: &'static str = #name_lit;
             }
@@ -182,7 +212,7 @@ impl TypeData {
 
         quote! {
             #[repr(C)]
-            enum #name {
+            pub enum #name {
                 #( #variants ),*
             }
         }
@@ -218,7 +248,13 @@ impl DllData {
 
         // println!("{}", serde_json::to_string(&self.types[19]).unwrap());
 
-        global_module.write_tokens(self)
+        let code = global_module.write_tokens(self);
+
+        quote! {
+            #![allow(warnings)]
+
+            #code
+        }
     }
 }
 
