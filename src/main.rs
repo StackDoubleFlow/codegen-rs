@@ -1,4 +1,5 @@
 #![warn(rust_2018_idioms)]
+#![feature(once_cell)]
 
 mod data;
 mod helpers;

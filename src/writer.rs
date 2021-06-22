@@ -3,6 +3,49 @@ use crate::helpers::{create_ident, create_ident_trimmed};
 use proc_macro2::{Ident, TokenStream};
 use quote::{quote, ToTokens};
 use std::collections::HashMap;
+use std::lazy::SyncOnceCell;
+
+macro_rules! replacement_types {
+    ( $( $name:ident => $replacement:ty ),* ) => {
+        #[derive(Debug)]
+        struct ReplacementTypes {
+            $(
+                $name: i32
+            ),*
+        }
+
+        impl ReplacementTypes {
+            fn replace(&self, id: i32) -> Option<TokenStream> {
+                return
+                $(
+                    if id == self.$name {
+                        Some(quote! { $replacement })
+                    } else
+                )*
+                { None }
+            }
+        }
+    };
+}
+
+replacement_types! {
+    single => f32,
+    double => f64,
+    void => (),
+    int16 => i16,
+    int32 => i32,
+    int64 => i64,
+    uint16 => u16,
+    uint32 => u32,
+    uint64 => u64,
+    byte => u8,
+    sbyte => i8,
+    boolean => bool,
+    object => quest_hook::libil2cpp::Il2CppObject,
+    string => quest_hook::libil2cpp::Il2CppString
+}
+
+static REPLACEMENT_TYPES: SyncOnceCell<ReplacementTypes> = SyncOnceCell::new();
 
 impl TypeRef {
     fn full_name(&self, types: &DllData) -> String {
@@ -33,10 +76,7 @@ impl TypeRef {
         let namespace_tokens = namespace.split_terminator('.').map(create_ident);
         let name_ident = create_ident(&name);
         let generics = if !self.generics.is_empty() {
-            let args = self
-                .generics
-                .iter()
-                .map(|tr| tr.write_instance_type(types));
+            let args = self.generics.iter().map(|tr| tr.write_instance_type(types));
             Some(quote! { < #( #args ),* > })
         } else {
             None
@@ -61,7 +101,12 @@ impl TypeRef {
         } else {
             None
         };
-        let name = self.write_qualified_name(types);
+        let replacements = REPLACEMENT_TYPES.get().unwrap();
+        let name = if let Some(replacement) = replacements.replace(self.type_id) {
+            replacement
+        } else {
+            self.write_qualified_name(types)
+        };
         let ty = quote! { #prefix #name };
         if self.is_array {
             quote! { *mut quest_hook::libil2cpp::Il2CppArray< #ty > }
@@ -119,7 +164,12 @@ impl Method {
 }
 
 impl TypeData {
-    fn write_deref(&self, name: &Ident, generics: &Option<TokenStream>, types: &DllData) -> Option<TokenStream> {
+    fn write_deref(
+        &self,
+        name: &Ident,
+        generics: &Option<TokenStream>,
+        types: &DllData,
+    ) -> Option<TokenStream> {
         let parent = self.parent.as_ref()?;
         let super_type = parent.write_qualified_name(types);
         Some(quote! {
@@ -209,10 +259,19 @@ impl TypeData {
     fn write_enum(&self, types: &DllData) -> TokenStream {
         let name = self.full_name(types);
         let variants = self.static_fields.iter().map(|f| create_ident(&f.name));
+        let generics = if !self.this.generics.is_empty() {
+            let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
+            Some(quote! { < #( #args ),* > })
+        } else {
+            None
+        };
+        let ty = self.instance_fields[0]
+            .field_type
+            .write_instance_type(types);
 
         quote! {
-            #[repr(C)]
-            pub enum #name {
+            #[repr( #ty )]
+            pub enum #name #generics {
                 #( #variants ),*
             }
         }
@@ -234,9 +293,35 @@ struct Module<'a> {
 }
 
 impl DllData {
-    pub fn write_tokens(&self) -> TokenStream {
-        let mut global_module = Module::default();
+    fn find_type(&self, namespace: &str, name: &str) -> i32 {
+        self.types
+            .iter()
+            .position(|ty| ty.this.namespace == namespace && ty.this.name == name)
+            .unwrap() as i32
+    }
 
+    pub fn write_tokens(&self) -> TokenStream {
+        // println!("{}", serde_json::to_string(&self.types[19]).unwrap());
+
+        let replacements = ReplacementTypes {
+            single: self.find_type("System", "Single"),
+            double: self.find_type("System", "Double"),
+            void: self.find_type("System", "Void"),
+            int16: self.find_type("System", "Int16"),
+            int32: self.find_type("System", "Int32"),
+            int64: self.find_type("System", "Int64"),
+            uint16: self.find_type("System", "UInt16"),
+            uint32: self.find_type("System", "UInt32"),
+            uint64: self.find_type("System", "UInt64"),
+            byte: self.find_type("System", "Byte"),
+            sbyte: self.find_type("System", "SByte"),
+            boolean: self.find_type("System", "Boolean"),
+            object: self.find_type("System", "Object"),
+            string: self.find_type("System", "String"),
+        };
+        REPLACEMENT_TYPES.set(replacements).unwrap();
+
+        let mut global_module = Module::default();
         for ty in &self.types {
             let namespace = ty.this.namespace.split_terminator('.');
             let mut module = &mut global_module;
@@ -245,8 +330,6 @@ impl DllData {
             }
             module.types.push(ty);
         }
-
-        // println!("{}", serde_json::to_string(&self.types[19]).unwrap());
 
         let code = global_module.write_tokens(self);
 
