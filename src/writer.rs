@@ -76,7 +76,7 @@ impl TypeRef {
         let namespace_tokens = namespace.split_terminator('.').map(create_ident);
         let name_ident = create_ident(&name);
         let generics = if !self.generics.is_empty() {
-            let args = self.generics.iter().map(|tr| tr.write_instance_type(types));
+            let args = self.generics.iter().map(|tr| tr.write_qualified_name(types));
             Some(quote! { < #( #args ),* > })
         } else {
             None
@@ -95,9 +95,9 @@ impl TypeRef {
         }
     }
 
-    fn write_instance_type(&self, types: &DllData) -> TokenStream {
+    fn write_instance_type(&self, types: &DllData, use_reference: bool) -> TokenStream {
         let prefix = if self.type_id > 0 && types[self].pass_by_ref() {
-            Some(quote! { *mut })
+            Some(if use_reference { quote! { &mut } } else { quote! { *mut } })
         } else {
             None
         };
@@ -119,17 +119,17 @@ impl TypeRef {
 impl Field {
     fn write_tokens(&self, types: &DllData) -> TokenStream {
         let name = create_ident_trimmed(&self.name);
-        let type_ref = self.field_type.write_instance_type(types);
+        let type_ref = self.field_type.write_instance_type(types, false);
         quote! {
-            #name: #type_ref
+            pub #name: #type_ref
         }
     }
 }
 
 impl Method {
-    fn write_tokens(&self, types: &DllData) -> TokenStream {
+    fn write_tokens(&self, i: usize, types: &DllData) -> TokenStream {
         let name_str = &self.name;
-        let name = create_ident(&self.name);
+        let name = create_ident(&(self.name.clone() + "_" + &i.to_string()));
         let param_names = self.parameters.iter().enumerate().map(|(i, p)| {
             if p.name.is_empty() {
                 create_ident(&format!("_param{}", i))
@@ -141,8 +141,8 @@ impl Method {
         let param_types = self
             .parameters
             .iter()
-            .map(|p| p.parameter_type.write_instance_type(types));
-        let return_type = self.return_type.write_instance_type(types);
+            .map(|p| p.parameter_type.write_instance_type(types, true));
+        let return_type = self.return_type.write_instance_type(types, false);
         let generics = if !self.generic_parameters.is_empty() {
             let args = self
                 .generic_parameters
@@ -156,14 +156,31 @@ impl Method {
 
         quote! {
             #[doc = #doc]
-            pub fn #name #generics ( #( #param_names: #param_types ),* ) -> #return_type {
-                Self::class().invoke(#name_str, #( #param_names2 ),* )
+            pub fn #name #generics ( #( #param_names: #param_types ),* ) -> Result<#return_type, &'static quest_hook::libil2cpp::Il2CppException> {
+                <Self as quest_hook::libil2cpp::Type>::class().invoke(#name_str, #( #param_names2 ),* )
             }
         }
     }
 }
 
 impl TypeData {
+    fn phantom_data_fields<'a>(
+        &'a self,
+        types: &'a DllData,
+    ) -> impl Iterator<Item = TokenStream> + 'a {
+        self.this
+            .generics
+            .iter()
+            .enumerate()
+            .map(move |(i, generic)| {
+                let name = create_ident(&format!("__phantom_data_{}", i));
+                let ty = generic.write_qualified_name(types);
+                quote! {
+                    #name: std::marker::PhantomData<*const #ty>
+                }
+            })
+    }
+
     fn write_deref(
         &self,
         name: &Ident,
@@ -200,7 +217,11 @@ impl TypeData {
         let namespace = &self.this.namespace;
         let name_lit = &self.this.name;
         let name = self.full_name(types);
-        let fields = self.instance_fields.iter().map(|f| f.write_tokens(types));
+        let fields = self
+            .instance_fields
+            .iter()
+            .map(|f| f.write_tokens(types))
+            .chain(self.phantom_data_fields(types));
         let super_field = self.parent.as_ref().map(|parent| {
             let super_ident = create_ident("super_");
             let super_type = parent.write_qualified_name(types);
@@ -208,7 +229,11 @@ impl TypeData {
                 #super_ident: #super_type,
             }
         });
-        let methods = self.methods.iter().map(|m| m.write_tokens(types));
+        let methods = self
+            .methods
+            .iter()
+            .enumerate()
+            .map(|(i, m)| m.write_tokens(i, types));
         let generics = if !self.this.generics.is_empty() {
             let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
             Some(quote! { < #( #args ),* > })
@@ -221,7 +246,7 @@ impl TypeData {
             #[repr(C)]
             pub struct #name #generics {
                 #super_field
-                #( pub #fields ),*
+                #( #fields ),*
             }
 
             impl #generics #name #generics {
@@ -239,16 +264,23 @@ impl TypeData {
 
     fn write_interface(&self, types: &DllData) -> TokenStream {
         let name = self.full_name(types);
-        let methods = self.methods.iter().map(|m| m.write_tokens(types));
+        let methods = self
+            .methods
+            .iter()
+            .enumerate()
+            .map(|(i, m)| m.write_tokens(i, types));
         let generics = if !self.this.generics.is_empty() {
             let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
             Some(quote! { < #( #args ),* > })
         } else {
             None
         };
+        let fields = self.phantom_data_fields(types);
 
         quote! {
-            pub struct #name #generics;
+            pub struct #name #generics {
+                #( pub #fields ),*
+            }
 
             impl #generics #name #generics {
                 #( #methods )*
@@ -258,7 +290,24 @@ impl TypeData {
 
     fn write_enum(&self, types: &DllData) -> TokenStream {
         let name = self.full_name(types);
-        let variants = self.static_fields.iter().map(|f| create_ident(&f.name));
+        let variants = self
+            .static_fields
+            .iter()
+            .map(|f| create_ident(&f.name).to_token_stream())
+            .chain(
+                self.this
+                    .generics
+                    .iter()
+                    .enumerate()
+                    .map(move |(i, generic)| {
+                        let name = create_ident(&format!("__PhantomData_{}", i));
+                        let ty = generic.write_qualified_name(types);
+                        quote! {
+                            /// This should be an unreachable variant
+                            #name(std::marker::PhantomData<*const #ty>)
+                        }
+                    }),
+            );
         let generics = if !self.this.generics.is_empty() {
             let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
             Some(quote! { < #( #args ),* > })
@@ -267,7 +316,7 @@ impl TypeData {
         };
         let ty = self.instance_fields[0]
             .field_type
-            .write_instance_type(types);
+            .write_instance_type(types, false);
 
         quote! {
             #[repr( #ty )]
