@@ -96,6 +96,7 @@ pub struct Field {
     pub specifiers: Vec<String>,
     #[serde(rename = "Type")]
     pub field_type: TypeRef,
+    pub constant: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

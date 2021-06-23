@@ -76,7 +76,10 @@ impl TypeRef {
         let namespace_tokens = namespace.split_terminator('.').map(create_ident);
         let name_ident = create_ident(&name);
         let generics = if !self.generics.is_empty() {
-            let args = self.generics.iter().map(|tr| tr.write_qualified_name(types));
+            let args = self
+                .generics
+                .iter()
+                .map(|tr| tr.write_qualified_name(types));
             Some(quote! { < #( #args ),* > })
         } else {
             None
@@ -89,7 +92,12 @@ impl TypeRef {
 
     fn write_qualified_name(&self, types: &DllData) -> TokenStream {
         if self.type_id >= 0 {
-            self.get_qualified_name(types)
+            let replacements = REPLACEMENT_TYPES.get().unwrap();
+            if let Some(replacement) = replacements.replace(self.type_id) {
+                replacement
+            } else {
+                self.get_qualified_name(types)
+            }
         } else {
             create_ident(&self.name).into_token_stream()
         }
@@ -97,16 +105,15 @@ impl TypeRef {
 
     fn write_instance_type(&self, types: &DllData, use_reference: bool) -> TokenStream {
         let prefix = if self.type_id > 0 && types[self].pass_by_ref() {
-            Some(if use_reference { quote! { &mut } } else { quote! { *mut } })
+            Some(if use_reference {
+                quote! { &mut }
+            } else {
+                quote! { *mut }
+            })
         } else {
             None
         };
-        let replacements = REPLACEMENT_TYPES.get().unwrap();
-        let name = if let Some(replacement) = replacements.replace(self.type_id) {
-            replacement
-        } else {
-            self.write_qualified_name(types)
-        };
+        let name = self.write_qualified_name(types);
         let ty = quote! { #prefix #name };
         if self.is_array {
             quote! { *mut quest_hook::libil2cpp::Il2CppArray< #ty > }
@@ -127,8 +134,23 @@ impl Field {
 }
 
 impl Method {
-    fn write_tokens(&self, i: usize, types: &DllData) -> TokenStream {
+    fn write_static_body(&self, args: impl Iterator<Item = Ident>) -> TokenStream {
         let name_str = &self.name;
+
+        quote! {
+            <Self as quest_hook::libil2cpp::Type>::class().invoke(#name_str, ( #( #args ),* ) )
+        }
+    }
+
+    fn write_instance_body(&self, args: impl Iterator<Item = Ident>) -> TokenStream {
+        let name_str = &self.name;
+
+        quote! {
+            self.invoke(#name_str, ( #( #args ),* ))
+        }
+    }
+
+    fn write_tokens(&self, i: usize, types: &DllData) -> TokenStream {
         let name = create_ident(&(self.name.clone() + "_" + &i.to_string()));
         let param_names = self.parameters.iter().enumerate().map(|(i, p)| {
             if p.name.is_empty() {
@@ -137,7 +159,6 @@ impl Method {
                 create_ident(&p.name)
             }
         });
-        let param_names2 = param_names.clone();
         let param_types = self
             .parameters
             .iter()
@@ -153,11 +174,27 @@ impl Method {
             None
         };
         let doc = format!("Offset: {:0X}", self.offset);
+        let is_instance = !self.specifiers.iter().any(|s| s == "static");
+
+        let self_param = is_instance.then(|| quote! { &mut self, });
+        // let all_params = iter::once(self_param).chain(quote! { #param_names: #param_types });
+
+        let args = param_names.clone();
+        let body = if is_instance {
+            self.write_instance_body(args)
+        } else {
+            self.write_static_body(args)
+        };
+        let exception_lifetime = (!is_instance).then(|| quote! { 'static });
 
         quote! {
             #[doc = #doc]
-            pub fn #name #generics ( #( #param_names: #param_types ),* ) -> Result<#return_type, &'static quest_hook::libil2cpp::Il2CppException> {
-                <Self as quest_hook::libil2cpp::Type>::class().invoke(#name_str, #( #param_names2 ),* )
+            pub fn #name #generics ( 
+                    #self_param 
+                    #( #param_names: #param_types ),* 
+                ) -> Result<#return_type, & #exception_lifetime quest_hook::libil2cpp::Il2CppException>
+            {
+                #body
             }
         }
     }
@@ -213,9 +250,7 @@ impl TypeData {
         matches!(self.type_enum, TypeEnum::Class | TypeEnum::Interface)
     }
 
-    fn write_class(&self, types: &DllData) -> TokenStream {
-        let namespace = &self.this.namespace;
-        let name_lit = &self.this.name;
+    fn write_class(&self, types: &DllData, generics: &Option<TokenStream>) -> TokenStream {
         let name = self.full_name(types);
         let fields = self
             .instance_fields
@@ -234,13 +269,7 @@ impl TypeData {
             .iter()
             .enumerate()
             .map(|(i, m)| m.write_tokens(i, types));
-        let generics = if !self.this.generics.is_empty() {
-            let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
-            Some(quote! { < #( #args ),* > })
-        } else {
-            None
-        };
-        let deref = self.write_deref(&name, &generics, types);
+        let deref = self.write_deref(&name, generics, types);
 
         quote! {
             #[repr(C)]
@@ -253,28 +282,17 @@ impl TypeData {
                 #( #methods )*
             }
 
-            unsafe impl #generics quest_hook::libil2cpp::Type for #name #generics {
-                const NAMESPACE: &'static str = #namespace;
-                const CLASS_NAME: &'static str = #name_lit;
-            }
-
             #deref
         }
     }
 
-    fn write_interface(&self, types: &DllData) -> TokenStream {
+    fn write_interface(&self, types: &DllData, generics: &Option<TokenStream>) -> TokenStream {
         let name = self.full_name(types);
         let methods = self
             .methods
             .iter()
             .enumerate()
             .map(|(i, m)| m.write_tokens(i, types));
-        let generics = if !self.this.generics.is_empty() {
-            let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
-            Some(quote! { < #( #args ),* > })
-        } else {
-            None
-        };
         let fields = self.phantom_data_fields(types);
 
         quote! {
@@ -288,12 +306,18 @@ impl TypeData {
         }
     }
 
-    fn write_enum(&self, types: &DllData) -> TokenStream {
+    fn write_enum(&self, types: &DllData, generics: &Option<TokenStream>) -> TokenStream {
         let name = self.full_name(types);
         let variants = self
             .static_fields
             .iter()
-            .map(|f| create_ident(&f.name).to_token_stream())
+            .map(|f| {
+                let ident = create_ident(&f.name);
+                let val = f.constant.as_ref().unwrap().parse::<TokenStream>().unwrap();
+                quote! {
+                    #ident = #val
+                }
+            })
             .chain(
                 self.this
                     .generics
@@ -308,12 +332,6 @@ impl TypeData {
                         }
                     }),
             );
-        let generics = if !self.this.generics.is_empty() {
-            let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
-            Some(quote! { < #( #args ),* > })
-        } else {
-            None
-        };
         let ty = self.instance_fields[0]
             .field_type
             .write_instance_type(types, false);
@@ -327,10 +345,29 @@ impl TypeData {
     }
 
     fn write_tokens(&self, types: &DllData) -> TokenStream {
-        match self.type_enum {
-            TypeEnum::Class | TypeEnum::Struct => self.write_class(types),
-            TypeEnum::Enum => self.write_enum(types),
-            TypeEnum::Interface => self.write_interface(types),
+        let namespace = &self.this.namespace;
+        let name_lit = &self.this.name;
+        let name = self.full_name(types);
+        let generics = if !self.this.generics.is_empty() {
+            let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
+            Some(quote! { < #( #args ),* > })
+        } else {
+            None
+        };
+
+        let ty = match self.type_enum {
+            TypeEnum::Class | TypeEnum::Struct => self.write_class(types, &generics),
+            TypeEnum::Enum => self.write_enum(types, &generics),
+            TypeEnum::Interface => self.write_interface(types, &generics),
+        };
+
+        quote! {
+            #ty
+
+            unsafe impl #generics quest_hook::libil2cpp::Type for #name #generics {
+                const NAMESPACE: &'static str = #namespace;
+                const CLASS_NAME: &'static str = #name_lit;
+            }
         }
     }
 }
@@ -384,6 +421,7 @@ impl DllData {
 
         quote! {
             #![allow(warnings)]
+            #![feature(arbitrary_enum_discriminant)]
 
             #code
         }
