@@ -5,6 +5,12 @@ use quote::{quote, ToTokens};
 use std::collections::HashMap;
 use std::lazy::SyncOnceCell;
 
+enum RefType {
+    Ref,
+    StaticRef,
+    Pointer,
+}
+
 macro_rules! replacement_types {
     ( $( $name:ident => $replacement:ty ),* ) => {
         #[derive(Debug)]
@@ -103,12 +109,12 @@ impl TypeRef {
         }
     }
 
-    fn write_instance_type(&self, types: &DllData, use_reference: bool) -> TokenStream {
+    fn write_instance_type(&self, types: &DllData, ref_type: RefType) -> TokenStream {
         let prefix = if self.type_id > 0 && types[self].pass_by_ref() {
-            Some(if use_reference {
-                quote! { &mut }
-            } else {
-                quote! { *mut }
+            Some(match ref_type {
+                RefType::Ref => quote! { &mut },
+                RefType::StaticRef => quote! { &'static mut },
+                RefType::Pointer => quote! { *mut },
             })
         } else {
             None
@@ -116,7 +122,7 @@ impl TypeRef {
         let name = self.write_qualified_name(types);
         let ty = quote! { #prefix #name };
         if self.is_array {
-            quote! { *mut quest_hook::libil2cpp::Il2CppArray< #ty > }
+            quote! { #prefix quest_hook::libil2cpp::Il2CppArray< #ty > }
         } else {
             ty
         }
@@ -126,7 +132,7 @@ impl TypeRef {
 impl Field {
     fn write_tokens(&self, types: &DllData) -> TokenStream {
         let name = create_ident_trimmed(&self.name);
-        let type_ref = self.field_type.write_instance_type(types, false);
+        let type_ref = self.field_type.write_instance_type(types, RefType::Pointer);
         quote! {
             pub #name: #type_ref
         }
@@ -162,8 +168,7 @@ impl Method {
         let param_types = self
             .parameters
             .iter()
-            .map(|p| p.parameter_type.write_instance_type(types, true));
-        let return_type = self.return_type.write_instance_type(types, false);
+            .map(|p| p.parameter_type.write_instance_type(types, RefType::Ref));
         let generics = if !self.generic_parameters.is_empty() {
             let args = self
                 .generic_parameters
@@ -175,7 +180,7 @@ impl Method {
         };
         let doc = format!("Offset: {:0X}", self.offset);
         let is_instance = !self.specifiers.iter().any(|s| s == "static");
-
+        let return_type = self.return_type.write_instance_type(types, if is_instance { RefType::Ref } else { RefType::StaticRef });
         let self_param = is_instance.then(|| quote! { &mut self, });
         // let all_params = iter::once(self_param).chain(quote! { #param_names: #param_types });
 
@@ -334,7 +339,7 @@ impl TypeData {
             );
         let ty = self.instance_fields[0]
             .field_type
-            .write_instance_type(types, false);
+            .write_instance_type(types, RefType::Pointer);
 
         quote! {
             #[repr( #ty )]
@@ -361,6 +366,10 @@ impl TypeData {
             TypeEnum::Interface => self.write_interface(types, &generics),
         };
 
+        let value_impl = matches!(self.type_enum, TypeEnum::Struct | TypeEnum::Enum).then(|| quote! {
+            quest_hook::libil2cpp::unsafe_value_type_impl!(#name #generics);
+        });
+
         quote! {
             #ty
 
@@ -368,6 +377,8 @@ impl TypeData {
                 const NAMESPACE: &'static str = #namespace;
                 const CLASS_NAME: &'static str = #name_lit;
             }
+
+            #value_impl
         }
     }
 }
