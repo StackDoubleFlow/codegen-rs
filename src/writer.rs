@@ -38,6 +38,7 @@ replacement_types! {
     single => f32,
     double => f64,
     void => (),
+    char => u16,
     int16 => i16,
     int32 => i32,
     int64 => i64,
@@ -119,12 +120,18 @@ impl TypeRef {
         } else {
             None
         };
-        let name = self.write_qualified_name(types);
-        let ty = quote! { #prefix #name };
+        let ty = self.write_qualified_name(types);
         if self.is_array {
             quote! { #prefix quest_hook::libil2cpp::Il2CppArray< #ty > }
+        } else if self.type_id > 0 {
+            quote! { #prefix #ty }
         } else {
-            ty
+            // Generic type parameter
+            if let RefType::Ref = ref_type {
+                quote! { < #ty as quest_hook::libil2cpp::Type>::Held<'_> }
+            } else {
+                quote! { < #ty as quest_hook::libil2cpp::Type>::HeldRaw }
+            }
         }
     }
 }
@@ -174,13 +181,20 @@ impl Method {
                 .generic_parameters
                 .iter()
                 .map(|tr| create_ident(&tr.name));
-            Some(quote! { < #( #args ),* > })
+            Some(quote! { < #( #args: quest_hook::libil2cpp::Type ),* > })
         } else {
             None
         };
         let doc = format!("Offset: {:0X}", self.offset);
         let is_instance = !self.specifiers.iter().any(|s| s == "static");
-        let return_type = self.return_type.write_instance_type(types, if is_instance { RefType::Ref } else { RefType::StaticRef });
+        let return_type = self.return_type.write_instance_type(
+            types,
+            if is_instance {
+                RefType::Ref
+            } else {
+                RefType::StaticRef
+            },
+        );
         let self_param = is_instance.then(|| quote! { &mut self, });
         // let all_params = iter::once(self_param).chain(quote! { #param_names: #param_types });
 
@@ -194,12 +208,13 @@ impl Method {
 
         quote! {
             #[doc = #doc]
-            pub fn #name #generics ( 
-                    #self_param 
-                    #( #param_names: #param_types ),* 
+            pub fn #name #generics (
+                    #self_param
+                    #( #param_names: #param_types ),*
                 ) -> Result<#return_type, & #exception_lifetime quest_hook::libil2cpp::Il2CppException>
             {
-                #body
+                unimplemented!()
+                // #body
             }
         }
     }
@@ -227,12 +242,13 @@ impl TypeData {
         &self,
         name: &Ident,
         generics: &Option<TokenStream>,
+        generics_unbounded: &Option<TokenStream>,
         types: &DllData,
     ) -> Option<TokenStream> {
         let parent = self.parent.as_ref()?;
         let super_type = parent.write_qualified_name(types);
         Some(quote! {
-            impl #generics std::ops::Deref for #name #generics {
+            impl #generics std::ops::Deref for #name #generics_unbounded {
                 type Target = #super_type;
 
                 fn deref(&self) -> &Self::Target {
@@ -255,7 +271,7 @@ impl TypeData {
         matches!(self.type_enum, TypeEnum::Class | TypeEnum::Interface)
     }
 
-    fn write_class(&self, types: &DllData, generics: &Option<TokenStream>) -> TokenStream {
+    fn write_class(&self, types: &DllData, generics: &Option<TokenStream>, generics_unbounded: &Option<TokenStream>) -> TokenStream {
         let name = self.full_name(types);
         let fields = self
             .instance_fields
@@ -274,7 +290,7 @@ impl TypeData {
             .iter()
             .enumerate()
             .map(|(i, m)| m.write_tokens(i, types));
-        let deref = self.write_deref(&name, generics, types);
+        let deref = self.write_deref(&name, generics, generics_unbounded, types);
 
         quote! {
             #[repr(C)]
@@ -283,7 +299,7 @@ impl TypeData {
                 #( #fields ),*
             }
 
-            impl #generics #name #generics {
+            impl #generics #name #generics_unbounded {
                 #( #methods )*
             }
 
@@ -291,7 +307,7 @@ impl TypeData {
         }
     }
 
-    fn write_interface(&self, types: &DllData, generics: &Option<TokenStream>) -> TokenStream {
+    fn write_interface(&self, types: &DllData, generics: &Option<TokenStream>, generics_unbounded: &Option<TokenStream>) -> TokenStream {
         let name = self.full_name(types);
         let methods = self
             .methods
@@ -302,17 +318,21 @@ impl TypeData {
 
         quote! {
             pub struct #name #generics {
-                #( pub #fields ),*
+                #( #fields ),*
             }
 
-            impl #generics #name #generics {
+            impl #generics #name #generics_unbounded {
                 #( #methods )*
             }
         }
     }
 
-    fn write_enum(&self, types: &DllData, generics: &Option<TokenStream>) -> TokenStream {
+    fn write_enum(&self, types: &DllData, generics: &Option<TokenStream>, generics_unbounded: &Option<TokenStream>) -> TokenStream {
         let name = self.full_name(types);
+        let fields = self.phantom_data_fields(types);
+        let ty = self.instance_fields[0]
+            .field_type
+            .write_instance_type(types, RefType::Pointer);
         let variants = self
             .static_fields
             .iter()
@@ -320,40 +340,35 @@ impl TypeData {
                 let ident = create_ident(&f.name);
                 let val = f.constant.as_ref().unwrap().parse::<TokenStream>().unwrap();
                 quote! {
-                    #ident = #val
+                    const #ident: #ty = #val;
                 }
-            })
-            .chain(
-                self.this
-                    .generics
-                    .iter()
-                    .enumerate()
-                    .map(move |(i, generic)| {
-                        let name = create_ident(&format!("__PhantomData_{}", i));
-                        let ty = generic.write_qualified_name(types);
-                        quote! {
-                            /// This should be an unreachable variant
-                            #name(std::marker::PhantomData<*const #ty>)
-                        }
-                    }),
-            );
-        let ty = self.instance_fields[0]
-            .field_type
-            .write_instance_type(types, RefType::Pointer);
+            });
 
         quote! {
-            #[repr( #ty )]
-            pub enum #name #generics {
-                #( #variants ),*
+            #[repr(C)]
+            pub struct #name #generics {
+                value: #ty,
+                #( #fields ),*
+            }
+
+            impl #generics #name #generics_unbounded {
+                #( #variants )*
             }
         }
     }
 
     fn write_tokens(&self, types: &DllData) -> TokenStream {
-        let namespace = &self.this.namespace;
         let name_lit = &self.this.name;
+        let namespace_lit = &self.this.namespace;
         let name = self.full_name(types);
+
         let generics = if !self.this.generics.is_empty() {
+            let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
+            Some(quote! { < #( #args: quest_hook::libil2cpp::Type ),* > })
+        } else {
+            None
+        };
+        let generics_unbounded = if !self.this.generics.is_empty() {
             let args = self.this.generics.iter().map(|tr| create_ident(&tr.name));
             Some(quote! { < #( #args ),* > })
         } else {
@@ -361,24 +376,25 @@ impl TypeData {
         };
 
         let ty = match self.type_enum {
-            TypeEnum::Class | TypeEnum::Struct => self.write_class(types, &generics),
-            TypeEnum::Enum => self.write_enum(types, &generics),
-            TypeEnum::Interface => self.write_interface(types, &generics),
+            TypeEnum::Class | TypeEnum::Struct => self.write_class(types, &generics, &generics_unbounded),
+            TypeEnum::Enum => self.write_enum(types, &generics, &generics_unbounded),
+            TypeEnum::Interface => self.write_interface(types, &generics, &generics_unbounded),
         };
 
-        let value_impl = matches!(self.type_enum, TypeEnum::Struct | TypeEnum::Enum).then(|| quote! {
-            quest_hook::libil2cpp::unsafe_value_type_impl!(#name #generics);
-        });
+        let ty_trait_impls = if matches!(self.type_enum, TypeEnum::Struct | TypeEnum::Enum) {
+            quote! {
+                quest_hook::libil2cpp::unsafe_impl_value_type!(in quest_hook::libil2cpp for #name #generics_unbounded => #namespace_lit . #name_lit #generics_unbounded );
+            }
+        } else {
+            quote! {
+                quest_hook::libil2cpp::unsafe_impl_reference_type!(in quest_hook::libil2cpp for #name #generics_unbounded => #namespace_lit . #name_lit #generics_unbounded );
+            }
+        };
 
         quote! {
             #ty
 
-            unsafe impl #generics quest_hook::libil2cpp::Type for #name #generics {
-                const NAMESPACE: &'static str = #namespace;
-                const CLASS_NAME: &'static str = #name_lit;
-            }
-
-            #value_impl
+            #ty_trait_impls
         }
     }
 }
@@ -404,6 +420,7 @@ impl DllData {
             single: self.find_type("System", "Single"),
             double: self.find_type("System", "Double"),
             void: self.find_type("System", "Void"),
+            char: self.find_type("System", "Char"),
             int16: self.find_type("System", "Int16"),
             int32: self.find_type("System", "Int32"),
             int64: self.find_type("System", "Int64"),
@@ -432,7 +449,7 @@ impl DllData {
 
         quote! {
             #![allow(warnings)]
-            #![feature(arbitrary_enum_discriminant)]
+            #![feature(arbitrary_enum_discriminant, generic_associated_types, once_cell)]
 
             #code
         }
